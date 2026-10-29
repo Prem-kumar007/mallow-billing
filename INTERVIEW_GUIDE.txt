@@ -1,0 +1,320 @@
+MALLOW BILLING - INTERVIEW PREPARATION GUIDE
+============================================
+
+Indha guide-ai project interview-ku prepare aagavum, demo pannumbodhu endha
+file open pannanum, enna explain pannanum-nu easy-a follow pannavum use
+pannunga. First full-a padichitu, ungaloda natural speaking style-la practice
+pannunga. Code-la actually irukkira behavior mattum claim pannunga.
+
+
+1. 60-90 SECOND INTRODUCTION (ENGLISH)
+--------------------------------------
+
+"I built a Laravel 12 billing application for merchants that need to manage
+customers, plans, subscriptions, usage, and invoices. The main challenge was
+making usage ingestion tenant-safe and idempotent while preserving the correct
+pricing when a subscription changes plans mid-cycle.
+
+"I organized the billing logic into services. Usage requests are authenticated
+with a merchant API key, validated, associated with the subscription segment
+that was effective at the event time, and protected by a merchant-scoped
+idempotency key. Subscription segments store pricing snapshots, so an invoice
+can calculate prorated base fees and overage using the prices that were in
+effect for each part of the billing period. Monetary calculations use BCMath
+instead of floating-point arithmetic.
+
+"I also added queued daily usage aggregation, scheduled invoice processing,
+merchant dashboard pages and a JSON dashboard endpoint. I verified the work
+with the Laravel test suite; the latest run passed 24 tests and 144
+assertions. I would also be transparent that I have not run a five-million-row
+load benchmark or simulated true concurrent database connections."
+
+
+2. PROJECT IN ONE SENTENCE
+--------------------------
+
+Merchant -> Customers -> Plans -> Subscriptions -> Plan-pricing segments ->
+Usage events -> Daily usage rollups -> Invoices and invoice items -> Dashboard.
+
+Each merchant owns its own business data. A usage event is tied to both a
+subscription and the exact pricing segment effective at its occurrence time.
+
+
+3. FILE-BY-FILE DEMO ORDER
+--------------------------
+
+Start at the README:
+  README.md
+  Explain setup, app architecture, API examples, indexes, trade-offs, and
+  which tests exist. It also documents what is not claimed (for example, no
+  five-million-event benchmark).
+
+Then show the database design:
+  database/migrations/2026_10_28_000000_create_billing_tables.php
+  Show the relationships, foreign keys, unique constraints, and indexes.
+  Important tables:
+    merchants              Merchant identity and API-key hash
+    customers              Merchant's customers
+    plans                  Price, currency, included units, overage, interval
+    subscriptions          Active billing relationship and current period
+    subscription_segments  Time-ranged snapshots of plan pricing
+    usage_events           Raw, idempotent usage records
+    daily_usage            Derived daily rollup
+    invoices               One invoice per subscription and billing period
+    invoice_items          Base-fee and overage breakdown
+
+Next show subscription and pricing snapshots:
+  app/Services/BillingPeriod.php
+  app/Services/SubscriptionSegmentService.php
+  app/Services/PlanPricingService.php
+  Explain that a new subscription gets an initial segment containing a snapshot
+  of price, allowance, currency, and overage rate. The first cycle is aligned
+  to the calendar boundary for its interval. A mid-cycle signup therefore has
+  a partial first cycle. A plan change closes the old segment and opens a new
+  one at the effective time. Old usage and old segment pricing are preserved.
+
+Then show the usage API:
+  routes/api.php
+  app/Http/Middleware/AuthenticateMerchantApiKey.php
+  app/Http/Requests/RecordUsageRequest.php
+  app/Http/Controllers/Api/UsageController.php
+  Explain the request path: route -> merchant authentication -> rate limit ->
+  request validation -> subscription/segment lookup -> idempotent insert.
+  The merchant ID comes from verified credentials, not an untrusted JSON
+  field. A duplicate with the same event payload returns the existing event;
+  reusing the same key with a different payload returns HTTP 409.
+
+Then explain billing math and invoice safety:
+  app/Services/InvoiceGenerationService.php
+  Explain period overlap for each segment, prorated base fee, prorated
+  allowance, overage charge, currency consistency, decimal arithmetic,
+  database transaction, subscription row lock, and unique invoice-period
+  constraint. Show how generateDue advances expired billing periods.
+
+Then show background work and scheduling:
+  app/Jobs/AggregateDailyUsage.php
+  app/Console/Commands/AggregatePreviousDayUsage.php
+  app/Console/Commands/AggregateUsageForDate.php
+  app/Jobs/GenerateDueInvoicesJob.php
+  routes/console.php
+  Explain the scheduled previous-day rollup, the manual date-specific
+  recovery/reconciliation command, retry settings, and queued due-invoice
+  processing. The daily aggregation replaces one date's results in a
+  transaction and inserts grouped output in batches of no more than 500.
+
+Then show the merchant UI:
+  resources/views/merchant/partials/sidebar-navigation.blade.php
+  resources/views/dashboard.blade.php
+  resources/views/merchant/management.blade.php
+  app/Http/Controllers/MerchantInvoiceController.php
+  Explain the shared menu and sign out. The manual invoice action uses the
+  same invoice service as scheduled processing and is scoped to the logged-in
+  merchant.
+
+Finish with dashboard and tests:
+  app/Http/Controllers/DashboardController.php
+  tests/Feature/BillingWorkflowTest.php
+  Explain browser dashboard vs authenticated JSON endpoint, then point to
+  tests for tenant isolation, idempotency, rate limits, 501 aggregation
+  groups (500 + 1), retries, invoice math, and manual invoice scope.
+
+
+4. IMPORTANT FLOWS TO EXPLAIN
+-----------------------------
+
+A. Usage ingestion
+   1. Client sends POST /api/usage with X-Merchant-Id and X-API-Key headers.
+   2. AuthenticateMerchantApiKey checks the stored password hash.
+   3. Middleware puts the verified merchant ID on the request. Throttling is
+      configured to identify the authenticated merchant.
+   4. RecordUsageRequest validates fields such as subscription ID,
+      idempotency key, units, and timestamp.
+   5. UsageController checks that the subscription belongs to this merchant
+      and is active, then finds the segment whose time range contains the
+      event's occurred_at.
+   6. The event is inserted with merchant, customer, subscription, and segment
+      IDs. The database unique key on (merchant_id, idempotency_key) is the
+      final protection against duplicate writes, including concurrent retries.
+   7. A matching retry returns HTTP 200; a new record returns HTTP 201; using
+      the same key for a different payload returns HTTP 409.
+
+B. Mid-cycle plan change
+   1. Find and lock the merchant-owned active subscription.
+   2. Confirm the effective time is inside its current billing period.
+   3. Find the segment active at that time.
+   4. Do not allow rewriting history if usage already exists after the
+      requested effective time.
+   5. Close the old segment at the change time and insert a new segment with
+      a snapshot of the new plan's price and allowance.
+   Result: usage before the change stays priced under the old segment; usage
+   after it is priced under the new segment.
+
+C. Invoice creation
+   1. Lock the subscription and check whether that subscription-period invoice
+      already exists.
+   2. Select all pricing segments overlapping the invoice period.
+   3. For each segment, calculate the overlap duration / full cycle duration.
+   4. Multiply the segment base fee and included allowance by that ratio.
+   5. Sum usage for that segment and period slice; charge only units above the
+      prorated allowance using that segment's saved overage rate.
+   6. Use BCMath decimal strings for calculations; persist invoice and line
+      items together in a transaction.
+   7. Unique invoice-period constraint and row locking help keep retries from
+      creating duplicate invoices. A currency change within one invoice period
+      is rejected rather than adding unlike currencies.
+
+D. Daily usage aggregation
+   Raw usage_events remain the detailed record. AggregateDailyUsage groups
+   events by merchant/customer/subscription/segment for one calendar date,
+   clears that date's old derived rows, and inserts fresh grouped totals in
+   500-row batches within a transaction. Re-running the date replaces the
+   result rather than adding to it a second time.
+   Recovery command:
+     php artisan billing:aggregate-usage 2026-10-28
+   Scheduler and queue worker must be running for queued work to execute.
+
+
+5. IF THE INTERVIEWER ASKS "WHY DID YOU DESIGN IT THIS WAY?"
+------------------------------------------------------------
+
+Why store a pricing snapshot in subscription_segments?
+  Plans can be edited later. An invoice for historical usage must use the
+  price and allowance that applied at that time, not the current plan values.
+
+Why use an idempotency key?
+  Clients retry requests after timeouts. The merchant-scoped unique key lets a
+  retry return the original event without double-counting usage. Conflicting
+  payloads are explicitly rejected.
+
+Why both a code check and a database unique constraint?
+  The early lookup gives a friendly replay response. Two requests can still
+  race after that lookup, so the unique database constraint is the final
+  correctness guarantee; the duplicate-key path then reads the winner.
+
+Why use BCMath?
+  Binary floating-point can produce rounding errors in money calculations.
+  BCMath keeps calculations in decimal strings and the code rounds at defined
+  persistence boundaries.
+
+Why use transactions and row locks?
+  Invoice creation involves several related writes; a transaction avoids a
+  partially written invoice. Locking a subscription serializes billing-cycle
+  advancement for that subscription. A unique constraint adds another layer
+  of duplicate protection.
+
+Why have raw events and daily_usage?
+  Raw events preserve detailed, auditable usage and support invoice
+  reconciliation. Daily rollups are derived data for aggregation/reconciliation.
+  The current dashboard still reads indexed raw events; the rollup is not yet
+  the dashboard query source.
+
+Why queue daily aggregation and invoices?
+  These jobs can take time and should not block a web request. Retries and a
+  recovery command help handle transient failures. In production, operate a
+  durable queue and monitor failures and queue lag.
+
+Why not claim five-million-row performance?
+  There is no measured benchmark in this project. The README describes index,
+  batching, partitioning and retention trade-offs, but those are design
+  considerations, not test results. I would benchmark with production-like
+  data and hardware before making a throughput claim.
+
+
+6. LIKELY QUESTIONS AND SHORT ANSWERS
+-------------------------------------
+
+Q: How do you prevent one merchant reading another merchant's data?
+A: Authenticate the merchant first, use that verified ID in queries, and
+   compare it with requested resource ownership. The usage controller checks
+   subscription ownership. Feature tests cover tenant mismatch.
+
+Q: What happens when the same usage request arrives twice?
+A: Same merchant, key, and payload returns the original record with 200.
+   Same key but different subscription, units, or timestamp returns 409.
+   A unique database key prevents a race from inserting both.
+
+Q: How do you handle a plan change during a billing month?
+A: Split the subscription into effective-time segments. Invoice each segment's
+   own prorated time, allowance, and overage using its pricing snapshot.
+
+Q: How do you make an invoice job retry-safe?
+A: Lock the subscription, check the invoice for that period, and rely on a
+   unique subscription-period constraint. The writes occur transactionally.
+
+Q: How can I manually generate invoices?
+A: The dashboard's manual action invokes generateDueForMerchant() for that
+   merchant. The CLI command is also available for synchronous operations.
+   Scheduled billing queues GenerateDueInvoicesJob.
+
+Q: What does the rate limit apply to?
+A: Usage API requests have a configurable per-authenticated-merchant limit.
+   Authentication middleware is ordered before throttling so the limiter can
+   key on the verified merchant, rather than relying on a client-supplied ID.
+
+Q: What would you improve next?
+A: I would add production-like load and concurrency tests, inject database
+   failures around invoice creation, add observability for queue/job failures,
+   and evaluate completed-day dashboard reads from daily aggregates only after
+   defining a reconciliation and freshness policy. I would also add a schema
+   upgrade migration for any existing legacy database rather than manually
+   altering it.
+
+
+7. DEMO COMMANDS
+----------------
+
+Run the test suite:
+  php artisan test
+
+Inspect scheduled tasks:
+  php artisan schedule:list
+
+Run scheduler once (only due events execute):
+  php artisan schedule:run
+
+Run queued work:
+  php artisan queue:work
+
+Run the scheduler continuously in local development:
+  php artisan schedule:work
+
+Queue a usage rollup for a specific date:
+  php artisan billing:aggregate-usage 2026-10-28
+
+Generate due invoices synchronously from CLI:
+  php artisan billing:generate-due-invoices
+
+
+8. DATABASE AND DEMO WARNINGS
+-----------------------------
+
+For a clean interview demo, use a fresh database and run migrations. The
+existing local MySQL database was reported to have an older/legacy schema and
+some schema fixes were applied directly in that local database. Those manual
+changes are not a replacement for a migration in a fresh environment. Do not
+blindly run the pending create-tables migration against a database where these
+tables already exist. Back up data and use a separate empty database for a
+clean setup.
+
+Merchant API keys are secrets. The creation command displays the plaintext
+key once and the database stores a hash. Do not show a real key in an
+interview recording or paste it into source control. Rotate the key if it was
+exposed or saved in an unsafe place.
+
+Prompt screenshots and the narrated walkthrough are personal submission
+artifacts. Capture them yourself; do not claim they were generated if they
+were not.
+
+
+9. LAST-MINUTE PRACTICE PLAN
+----------------------------
+
+1. Practice the 60-90 second introduction twice without reading.
+2. Open the files in section 3 in that order and explain each in 1-2 minutes.
+3. Practice the usage, plan-change, and invoice flows from section 4.
+4. Run php artisan test and be ready to report the actual result.
+5. State limitations honestly. Do not claim load tests, true concurrency tests,
+   payment collection, tax handling, or production deployment if you did not
+   implement or verify them.
+
+Good luck!
