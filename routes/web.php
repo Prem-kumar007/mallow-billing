@@ -31,6 +31,9 @@ Route::get('/merchants/{merchantId}/login', [MerchantLoginController::class, 'sh
 Route::post('/merchants/{merchantId}/login', [MerchantLoginController::class, 'store'])
     ->middleware('throttle:merchant-login')
     ->name('merchant.login.store');
+Route::get('/merchants/{merchantId}/logout', [MerchantLoginController::class, 'confirmLogout'])
+    ->middleware('merchant.dashboard')
+    ->name('merchant.logout.confirm');
 Route::post('/merchants/{merchantId}/logout', [MerchantLoginController::class, 'destroy'])
     ->middleware('merchant.dashboard')
     ->name('merchant.logout');

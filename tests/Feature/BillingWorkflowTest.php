@@ -866,6 +866,35 @@ class BillingWorkflowTest extends TestCase
             ->assertRedirect(route('merchant.login', ['merchantId' => $otherMerchantId]));
     }
 
+    public function test_merchant_login_redirects_to_dashboard_and_logout_invalidates_session(): void
+    {
+        $merchantId = $this->createMerchant();
+
+        $this->get(route('merchant.login', ['merchantId' => $merchantId]))
+            ->assertOk()
+            ->assertSee('Merchant API key');
+
+        $this->post(route('merchant.login.store', ['merchantId' => $merchantId]), [
+            'api_key' => 'test-secret',
+        ])->assertRedirect(route('merchant.dashboard', ['merchantId' => $merchantId]))
+            ->assertSessionHas('dashboard_merchant_id', $merchantId);
+
+        $this->get(route('merchant.dashboard', ['merchantId' => $merchantId]))
+            ->assertOk();
+
+        $this->get(route('merchant.logout.confirm', ['merchantId' => $merchantId]))
+            ->assertOk()
+            ->assertSee('Sign out of Merchant?');
+
+        $this->post(route('merchant.logout', ['merchantId' => $merchantId]))
+            ->assertRedirect(route('merchant.login', ['merchantId' => $merchantId]))
+            ->assertSessionHas('success', 'You have been signed out.')
+            ->assertSessionMissing('dashboard_merchant_id');
+
+        $this->get(route('merchant.dashboard', ['merchantId' => $merchantId]))
+            ->assertRedirect(route('merchant.login', ['merchantId' => $merchantId]));
+    }
+
     public function test_merchant_can_create_customers_plans_and_subscriptions_and_change_plans(): void
     {
         Carbon::setTestNow('2026-01-10 12:00:00');
@@ -1018,7 +1047,7 @@ class BillingWorkflowTest extends TestCase
     {
         $this->post(route('merchant.login.store', ['merchantId' => $merchantId]), [
             'api_key' => $merchantId === 1 ? 'test-secret' : 'other-secret',
-        ])->assertRedirect(route('merchant.management', ['merchantId' => $merchantId]));
+        ])->assertRedirect(route('merchant.dashboard', ['merchantId' => $merchantId]));
     }
 
     private function createCustomer(int $merchantId): int

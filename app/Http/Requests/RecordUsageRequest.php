@@ -24,3 +24,5 @@ class RecordUsageRequest extends FormRequest
         ];
     }
 }
+
+

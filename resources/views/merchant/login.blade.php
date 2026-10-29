@@ -26,6 +26,10 @@
         <h1 class="mb-2">Sign in to {{ $merchant->name }}</h1>
         <p class="text-secondary mb-4">Use the merchant API key to manage customers, plans and subscriptions.</p>
 
+        @if (session('success'))
+            <div class="alert alert-success" role="status">{{ session('success') }}</div>
+        @endif
+
         <form method="POST" action="{{ route('merchant.login.store', ['merchantId' => $merchant->id]) }}">
             @csrf
             <label for="api_key" class="form-label fw-semibold">Merchant API key</label>

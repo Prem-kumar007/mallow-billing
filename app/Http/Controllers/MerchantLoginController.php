@@ -21,6 +21,21 @@ class MerchantLoginController extends Controller
         return view('merchant.login', compact('merchant'));
     }
 
+    public function confirmLogout(int $merchantId, Request $request): View
+    {
+        $merchant = DB::table('merchants')
+            ->where('id', $merchantId)
+            ->first(['id', 'name']);
+
+        abort_unless($merchant, 404, 'Merchant not found.');
+        abort_unless(
+            (int) $request->session()->get('dashboard_merchant_id') === $merchantId,
+            403
+        );
+
+        return view('merchant.logout', compact('merchant'));
+    }
+
     public function store(Request $request, int $merchantId): RedirectResponse
     {
         $data = $request->validate([
@@ -39,7 +54,7 @@ class MerchantLoginController extends Controller
         $request->session()->regenerate();
         $request->session()->put('dashboard_merchant_id', (int) $merchant->id);
 
-        return redirect()->route('merchant.management', ['merchantId' => $merchantId])
+        return redirect()->route('merchant.dashboard', ['merchantId' => $merchantId])
             ->with('success', 'You are signed in to the merchant workspace.');
     }
 
@@ -50,6 +65,7 @@ class MerchantLoginController extends Controller
             $request->session()->regenerateToken();
         }
 
-        return redirect()->route('merchant.dashboard', ['merchantId' => $merchantId]);
+        return redirect()->route('merchant.login', ['merchantId' => $merchantId])
+            ->with('success', 'You have been signed out.');
     }
 }

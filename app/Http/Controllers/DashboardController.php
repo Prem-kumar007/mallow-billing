@@ -163,14 +163,14 @@ class DashboardController extends Controller
 
             $customer->usage_percentage =
                 $customer->included_allowance > 0
-                    ? round(
-                        (
-                            (int) $customer->total_units
-                            / $customer->included_allowance
-                        ) * 100,
-                        1
-                    )
-                    : 0;
+                ? round(
+                    (
+                        (int) $customer->total_units
+                        / $customer->included_allowance
+                    ) * 100,
+                    1
+                )
+                : 0;
 
             return $customer;
         });
@@ -203,8 +203,8 @@ class DashboardController extends Controller
         // 7. Customers whose usage dropped by more than 50%
         $churnRisk = collect();
         $churnCandidates = $previousByCustomer->filter(
-            fn ($previousUnits, $customerId): bool =>
-                (int) $previousUnits > 0
+            fn($previousUnits, $customerId): bool =>
+            (int) $previousUnits > 0
                 && (int) ($currentByCustomer[$customerId] ?? 0) < ((int) $previousUnits * 0.5)
         );
         $churnCustomerNames = DB::table('customers')
@@ -365,7 +365,7 @@ class DashboardController extends Controller
 
                 $cycleAllowance += (int) floor(
                     (float) $segment->included_units
-                    * ($segmentSeconds / $cycleSeconds)
+                        * ($segmentSeconds / $cycleSeconds)
                 );
             }
         }
@@ -433,19 +433,19 @@ class DashboardController extends Controller
                             'end' => $previousComparisonEnd->toIso8601String(),
                         ],
                     ],
-                    'top_customers_by_usage' => $topCustomers->map(fn ($customer) => [
+                    'top_customers_by_usage' => $topCustomers->map(fn($customer) => [
                         'customer_id' => (int) $customer->id,
                         'customer_name' => $customer->name,
                         'usage_units' => (int) $customer->total_units,
                     ])->values(),
                     'projected_overage_revenue' => collect($projectedOverageRevenue)
-                        ->map(fn (string $amount, string $currency) => [
+                        ->map(fn(string $amount, string $currency) => [
                             'currency' => $currency,
                             'amount' => $amount,
                         ])
                         ->values(),
                     'customers_with_usage_drop_over_50_percent' => $churnRisk
-                        ->map(fn ($customer) => [
+                        ->map(fn($customer) => [
                             'customer_id' => (int) $customer->id,
                             'customer_name' => $customer->name,
                             'previous_usage_units' => (int) $customer->previous_units,

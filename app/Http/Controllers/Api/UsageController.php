@@ -53,6 +53,7 @@ class UsageController extends Controller
             ], 422);
         }
 
+
         try {
             $id = DB::table('usage_events')->insertGetId([
                 'merchant_id' => $merchantId,

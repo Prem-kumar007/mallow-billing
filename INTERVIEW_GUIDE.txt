@@ -1,10 +1,123 @@
 MALLOW BILLING - INTERVIEW PREPARATION GUIDE
 ============================================
 
-Indha guide-ai project interview-ku prepare aagavum, demo pannumbodhu endha
-file open pannanum, enna explain pannanum-nu easy-a follow pannavum use
-pannunga. First full-a padichitu, ungaloda natural speaking style-la practice
-pannunga. Code-la actually irukkira behavior mattum claim pannunga.
+Indha guide-ai fresh setup, existing merchant login, interview demo, and
+project explanation-ku use pannunga. Code-la actually irukkira behavior
+mattum claim pannunga.
+
+IMPORTANT SECURITY NOTE
+-----------------------
+
+Neenga chat-la paste panna merchant API key exposed-a consider pannanum.
+Andha key-ai interview/demo login-ku use pannaadheenga. Merchant 1-ku pudhu
+key generate panni, pudhu key-ai secure-a save pannunga. Inga actual key
+value-ai copy pannavo, text file-la store pannavo koodadhu.
+
+
+STEP 1 - FRESH PROJECT SETUP (POWERSHELL)
+-----------------------------------------
+
+Open PowerShell in the project folder:
+  cd C:\xampp\htdocs\mallow-billing
+
+Install PHP dependencies:
+  composer install
+
+Create local environment settings:
+  Copy-Item .env.example .env
+  php artisan key:generate
+
+Before migrating, open .env and configure DB_CONNECTION, DB_DATABASE,
+DB_USERNAME, and DB_PASSWORD for the database you intend to use:
+  notepad .env
+
+IMPORTANT: Run migrations against a new, empty database for a clean setup.
+The existing local MySQL database was reported to have an older schema with
+manual changes. Do not blindly run the create-tables migration against that
+database. Back it up and create/use a separate empty database first.
+
+Create the schema:
+  php artisan migrate
+
+Create a merchant workspace:
+  php artisan billing:merchant-create "Acme Corp"
+
+The command prints the Merchant ID and API key once. Copy the key directly
+into a password manager or another secure place. Do not put it in source
+code, screenshots, this guide, or a Git commit.
+
+Run the app:
+  php artisan serve
+
+Open this in the browser:
+  http://127.0.0.1:8000
+
+Sign in using the merchant ID and the API key. The login page asks for the
+key; it is not the merchant name or database password.
+
+
+STEP 2 - EXISTING MERCHANT LOGIN / LOST KEY RESET
+-------------------------------------------------
+
+If you still have Merchant 1's current, unexposed API key, use it at the
+merchant login screen. Database-la hash mattum irukkiradhaal old plaintext
+key-ai database-lendhu retrieve panna mudiyadhu.
+
+Since a key was pasted into chat, safest option is to replace Merchant 1's
+key now. Replacing it immediately invalidates its previous key.
+
+From the project directory, start Tinker:
+  php artisan tinker
+
+At the Tinker prompt, enter these as PHP statements. Do NOT type "<?php" in
+Tinker. First confirm Merchant 1 exists:
+  DB::table('merchants')->where('id', 1)->exists()
+
+If it returns true, create and set a new key. Run one statement at a time:
+  $key = Illuminate\Support\Str::random(64);
+  DB::table('merchants')->where('id', 1)->update(['api_key_hash' => Illuminate\Support\Facades\Hash::make($key), 'updated_at' => now()]);
+  $key
+
+Copy the newly displayed key to a password manager and use it to sign in as
+Merchant 1. Do not paste the new key into chat or save it in this text file.
+Exit Tinker:
+  exit
+
+If exists() returns false, Merchant 1 is not in the database selected by the
+current .env. Check DB_DATABASE and the active connection before proceeding.
+If update() reports 0, stop and confirm that merchant row still exists. Do
+not assume the key was changed successfully.
+
+
+STEP 3 - OPTIONAL BACKGROUND WORKERS
+------------------------------------
+
+The web app and basic demo can run with php artisan serve. To demonstrate
+queued rollups or scheduled invoice processing, start a worker in another
+PowerShell window:
+  cd C:\xampp\htdocs\mallow-billing
+  php artisan queue:work
+
+For local development, start the scheduler in another window:
+  cd C:\xampp\htdocs\mallow-billing
+  php artisan schedule:work
+
+Queued work will not execute until a queue worker is running. The scheduler
+only triggers tasks when their configured scheduled time is due.
+
+
+STEP 4 - INTERVIEW DEMO ORDER
+-----------------------------
+
+1. Sign in and show the shared merchant menu: Dashboard, Plans, Customers,
+   Subscriptions, Usage, Invoices, and Sign out.
+2. Show the dashboard's invoices list. Click the eye icon to open an invoice;
+   explain its customer, billing dates, status, itemized charges, and total.
+3. Use the management page to explain customer, plan, and subscription setup.
+4. Explain the usage API and merchant-scoped idempotency behavior.
+5. Explain the plan-segment snapshots and invoice calculations.
+6. Show the daily rollup and queued invoice jobs.
+7. Finish by running php artisan test and report the current result.
 
 
 1. 60-90 SECOND INTRODUCTION (ENGLISH)
@@ -24,9 +137,8 @@ effect for each part of the billing period. Monetary calculations use BCMath
 instead of floating-point arithmetic.
 
 "I also added queued daily usage aggregation, scheduled invoice processing,
-merchant dashboard pages and a JSON dashboard endpoint. I verified the work
-with the Laravel test suite; the latest run passed 24 tests and 144
-assertions. I would also be transparent that I have not run a five-million-row
+merchant dashboard pages and a JSON dashboard endpoint. The latest full test
+run passed 26 tests and 171 assertions. I have not run a five-million-row
 load benchmark or simulated true concurrent database connections."
 
 
@@ -106,17 +218,20 @@ Then show the merchant UI:
   resources/views/merchant/partials/sidebar-navigation.blade.php
   resources/views/dashboard.blade.php
   resources/views/merchant/management.blade.php
+  resources/views/merchant/invoices/show.blade.php
   app/Http/Controllers/MerchantInvoiceController.php
-  Explain the shared menu and sign out. The manual invoice action uses the
-  same invoice service as scheduled processing and is scoped to the logged-in
-  merchant.
+  Explain the shared menu and sign out. The invoice list has an eye action to
+  open a merchant-scoped invoice detail page with printable itemized charges.
+  The manual invoice action uses the same service as scheduled processing
+  and is scoped to the logged-in merchant.
 
 Finish with dashboard and tests:
   app/Http/Controllers/DashboardController.php
   tests/Feature/BillingWorkflowTest.php
   Explain browser dashboard vs authenticated JSON endpoint, then point to
   tests for tenant isolation, idempotency, rate limits, 501 aggregation
-  groups (500 + 1), retries, invoice math, and manual invoice scope.
+  groups (500 + 1), retries, invoice math, invoice detail access, and manual
+  invoice scope.
 
 
 4. IMPORTANT FLOWS TO EXPLAIN
@@ -157,8 +272,8 @@ C. Invoice creation
    4. Multiply the segment base fee and included allowance by that ratio.
    5. Sum usage for that segment and period slice; charge only units above the
       prorated allowance using that segment's saved overage rate.
-   6. Use BCMath decimal strings for calculations; persist invoice and line
-      items together in a transaction.
+   6. Use BCMath decimal strings; persist invoice and line items together in
+      a transaction.
    7. Unique invoice-period constraint and row locking help keep retries from
       creating duplicate invoices. A currency change within one invoice period
       is rejected rather than adding unlike currencies.
@@ -225,8 +340,8 @@ Why not claim five-million-row performance?
 
 Q: How do you prevent one merchant reading another merchant's data?
 A: Authenticate the merchant first, use that verified ID in queries, and
-   compare it with requested resource ownership. The usage controller checks
-   subscription ownership. Feature tests cover tenant mismatch.
+   compare it with requested resource ownership. Feature tests cover tenant
+   mismatch, including invoice detail access.
 
 Q: What happens when the same usage request arrives twice?
 A: Same merchant, key, and payload returns the original record with 200.
@@ -241,10 +356,12 @@ Q: How do you make an invoice job retry-safe?
 A: Lock the subscription, check the invoice for that period, and rely on a
    unique subscription-period constraint. The writes occur transactionally.
 
-Q: How can I manually generate invoices?
-A: The dashboard's manual action invokes generateDueForMerchant() for that
-   merchant. The CLI command is also available for synchronous operations.
-   Scheduled billing queues GenerateDueInvoicesJob.
+Q: How can I manually generate and view invoices?
+A: Click Generate due invoices on the dashboard. Generated invoices appear
+   in the Invoices section. Click the eye icon to inspect the customer,
+   billing period, status, line items, and total. A print button is available.
+   The synchronous CLI command is also available; scheduled billing queues
+   GenerateDueInvoicesJob.
 
 Q: What does the rate limit apply to?
 A: Usage API requests have a configurable per-authenticated-merchant limit.
@@ -293,13 +410,12 @@ existing local MySQL database was reported to have an older/legacy schema and
 some schema fixes were applied directly in that local database. Those manual
 changes are not a replacement for a migration in a fresh environment. Do not
 blindly run the pending create-tables migration against a database where these
-tables already exist. Back up data and use a separate empty database for a
-clean setup.
+tables already exist. Back it up and use a separate empty database.
 
 Merchant API keys are secrets. The creation command displays the plaintext
 key once and the database stores a hash. Do not show a real key in an
-interview recording or paste it into source control. Rotate the key if it was
-exposed or saved in an unsafe place.
+interview recording or paste it into source control. Rotate any key exposed
+in chat, screenshots, terminals, or an unsafe file.
 
 Prompt screenshots and the narrated walkthrough are personal submission
 artifacts. Capture them yourself; do not claim they were generated if they
@@ -311,7 +427,7 @@ were not.
 
 1. Practice the 60-90 second introduction twice without reading.
 2. Open the files in section 3 in that order and explain each in 1-2 minutes.
-3. Practice the usage, plan-change, and invoice flows from section 4.
+3. Practice the usage, plan-change, invoice-generation, and invoice-view flows.
 4. Run php artisan test and be ready to report the actual result.
 5. State limitations honestly. Do not claim load tests, true concurrency tests,
    payment collection, tax handling, or production deployment if you did not

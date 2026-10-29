@@ -1,0 +1,408 @@
+mallow billing - video walkthrough script
+========================================
+
+purpose
+-------
+
+indha file video recording-ku complete guide. idhu recording illa; neenga
+screen share panni, unga voice-la narration record pannanum. silent screen
+capture mattum podhaadhu. keela irukkira "say" lines-ai natural-a pesunga;
+exact-a memorize panna thevai illa. tamil instructions unga preparation
+kaaga; interview video-la english narration use pannalaam.
+
+suggested length: 7-9 minutes.
+goal: working application-ai kaattitu, important architecture/design
+decisions-ai actual source files-oda explain pannunga.
+
+
+before you record - 10 minute checklist
+---------------------------------------
+
+1. merchant api key chat/document-la paste aagirundhaal adhai exposed-nu
+   consider pannunga. old key-ai use pannaadheenga. merchant owner approval
+   irundhaal pudhu key generate panni, old key replace pannunga; replacement
+   old key-ai invalidate pannum. key-ai screen, prompt, source file, readme,
+   or recording-la display pannaadheenga.
+
+2. clean demo-ku separate, empty database use pannunga. existing local mysql
+   database legacy schema-a irukkalaam; adhil `php artisan migrate` blind-a
+   run pannaadheenga. existing data thevai-na backup eduthu, separate db
+   create panni .env-la adhai configure pannunga.
+
+3. powershell-la project root open pannunga:
+     cd c:\xampp\htdocs\mallow-billing
+
+4. app dependencies and environment ready-nu confirm pannunga. fresh setup
+   mattum-na .env.example copy, app key generate, db config, migrations,
+   merchant creation complete pannunga. already working setup irundhaal
+   second time migrate/merchant-create run panna vendam.
+
+5. xampp use pannina apache/mysql start pannitu browser-la project url open
+   pannunga. artisan development server use pannina:
+     php artisan serve
+   app url:
+     http://127.0.0.1:8000
+   xampp apache url:
+     http://localhost/mallow-billing/public/
+
+6. merchant login page-ku:
+     http://localhost/mallow-billing/public/merchants/1/login
+   `1` ungaloda existing demo merchant id-a irukkanum. correct merchant
+   api key-ai password manager-lendhu eduthu login pannunga. recording-la
+   key type pannumbodhu password field hidden-a irukkum-nu check pannunga;
+   api key-ai narration-la sollavo, screen-la reveal pannavo vendam.
+
+7. invoice demo-ku merchant account-la already generated invoice ready-a
+   irukkanum. dashboard-la "generate due invoices" button current period end
+   aana subscription-kku mattum invoice create pannum. due subscription
+   illaina "no invoices are due yet" message varum. idhai explain pannunga;
+   invoice instant-a create aagum-nu sollaadheenga.
+
+8. invoice illa-na safe demo data-ai advance-a prepare pannunga. recording
+   nadakkumbodhu production/shared db-la dates manipulate pannaadheenga.
+   invoice detail kaatta mudiyavittaal, button oda due behavior-ai explain
+   pannitu source code/test-la detail route-ai kaattunga. fake invoice-ai
+   real generated invoice-nu present pannaadheenga.
+
+9. browser tabs-ai ready pannunga:
+   - logged-in merchant dashboard
+   - management page
+   - (optional) invoice detail page opened via the eye icon
+   ide-la source files-ai below demo order-la ready pannunga.
+
+10. screen-la .env, terminals-la api key, browser password manager, user
+    home paths, personal notifications, or other private data varama
+    irukkattum. api key reset pannumbodhu key terminal output record
+    pannaadheenga. secret visible aana take-ai delete panni re-record pannunga.
+
+
+recording order and narration
+-----------------------------
+
+section 1 - introduction (0:00-0:40)
+
+screen:
+   merchant dashboard-ai open pannunga. sidebar, summary cards, dashboard
+   sections visible-a irukkattum. secret key/input screen-la irukka koodadhu.
+
+say:
+   "hello, this is my mallow billing project. it is a laravel application for
+   merchants to manage customers, plans, subscriptions, usage, and invoices.
+   the main engineering challenges i focused on were tenant isolation,
+   duplicate-safe usage ingestion, preserving historical plan prices, and
+   calculating invoices accurately when a plan changes during a billing
+   period. i will first show the running application, then trace those
+   decisions through the code and tests."
+
+
+section 2 - working merchant ui (0:40-1:35)
+
+screen action:
+   1. dashboard-la merchant name and high-level metrics kaattunga.
+   2. sidebar menu-va point panni dashboard, plans, customers, subscriptions,
+      usage, invoices, sign out kaattunga.
+   3. customers/plans/subscriptions link click panni management view-ku
+      navigate pannunga; records create pannina demo data-ku mattum create
+      pannunga, unnecessary duplicate records create panna vendam.
+   4. dashboard-ku thirumbi usage/invoices section scroll pannunga.
+
+say:
+   "the ui is organized around a merchant workspace. customer, plan, and
+   subscription management is separate from dashboard reporting. the shared
+   navigation keeps the same sections and sign-out available across the
+   workspace. all these pages are protected by a merchant session, and
+   management queries use the signed-in merchant's id."
+
+note:
+   dashboard metric cards are summaries. projected overage is a forecast,
+   not an invoice amount already charged. don't claim a payment gateway.
+
+
+section 3 - data model (1:35-2:25)
+
+ide file:
+   database/migrations/2026_10_28_000000_create_billing_tables.php
+
+screen action:
+   1. show table creation sections for merchants, customers, plans,
+      subscriptions, subscription_segments, usage_events, daily_usage,
+      invoices, invoice_items.
+   2. point to foreign keys, `usage_events` unique key on merchant and
+      idempotency key, usage time indexes, and invoice-period uniqueness.
+   3. don't scroll through every line; show the key constraints only.
+
+say:
+   "the schema separates merchant and catalog data from high-volume usage
+   events. foreign keys protect relationships. usage has a unique
+   merchant-and-idempotency-key constraint, and invoices have a unique
+   subscription-and-period constraint. indexes support merchant lookups,
+   time-range usage queries, and due-invoice scans. this migration is intended
+   for a fresh database; i would use a reviewed upgrade migration for an
+   existing legacy schema."
+
+design decision:
+   "i keep raw usage events as the detailed source of truth. daily usage is a
+   derived rollup that can be rebuilt for reconciliation."
+
+
+section 4 - authentication and usage api (2:25-3:30)
+
+ide file order:
+   routes/api.php
+   app/http/middleware/authenticatemerchantapikey.php
+   app/http/requests/recordusagerequest.php
+   app/http/controllers/api/usagecontroller.php
+   bootstrap/app.php
+
+screen action:
+   1. in routes/api.php show post /api/usage and the auth/rate-limit
+      middleware.
+   2. in authenticatemerchantapikey show stored hash verification and
+      setting verified merchant_id on the request. do not show actual keys.
+   3. in recordusagerequest show validation rules.
+   4. in usagecontroller show merchant-scoped subscription lookup, effective
+      segment lookup, idempotency lookup, insert, and conflict response.
+   5. in bootstrap/app.php briefly show middleware priority that makes
+      merchant authentication run before usage throttling.
+
+say:
+   "the usage api authenticates with x-merchant-id and x-api-key headers.
+   the database stores a password hash, not the plaintext key. after
+   authentication, the verified merchant id is stored on the request and is
+   used for ownership checks; the client cannot choose another tenant by
+   changing a request body field. input validation happens before insertion,
+   and the event is attached to the subscription segment effective at its
+   occurred_at timestamp."
+
+say:
+   "idempotency matters because clients retry after network timeouts. the
+   same merchant, key, and payload returns the existing event; using the key
+   for a different payload returns http 409. the code checks for a replay
+   early, and the database unique constraint handles the race where two
+   requests arrive at the same time."
+
+optional live api demo:
+   use postman/http client only if a safe demo credential is prepared outside
+   the recording. never type a real api key into an unmasked terminal or
+   show it in a request screenshot. explain expected statuses instead:
+   new event 201, identical replay 200, conflicting replay 409, invalid input
+   422, unauthenticated 401, rate-limited 429.
+
+
+section 5 - plan snapshots and mid-cycle change (3:30-4:25)
+
+ide file order:
+   app/services/billingperiod.php
+   app/services/subscriptionsegmentservice.php
+   app/services/planpricingservice.php
+
+screen action:
+   1. show firstperiod() calendar boundary handling in billingperiod.
+   2. in subscribe(), show customer ownership check and creation of a
+      subscription segment snapshot.
+   3. in changeplan(), show locking, closing the current segment, and
+      inserting a new segment with the new plan pricing.
+   4. briefly show planpricingservice cache ttl and merchant/plan-scoped key.
+
+say:
+   "a plan can be edited in the catalog later, so historical billing must not
+   read the latest plan price. each effective-dated subscription segment
+   snapshots price, currency, included units, and overage rate. when a plan
+   changes, the old segment is closed and a new one starts at the effective
+   time. usage before and after the change can therefore be billed against
+   the correct historical terms."
+
+say:
+   "the first period is aligned to the plan's calendar interval. a mid-cycle
+   start has only the remaining part of that first period, so base fee and
+   included allowance are prorated. segment date ranges use start-inclusive,
+   end-exclusive boundaries to avoid an event matching two segments."
+
+
+section 6 - invoice math and retry safety (4:25-5:30)
+
+ide file:
+   app/services/invoicegenerationservice.php
+
+screen action:
+   1. show transaction and subscription row lock.
+   2. show existing invoice check and period-overlapping segments query.
+   3. show duration ratio, base charge, prorated included units, usage sum,
+      overage calculation, currency check, invoice and item inserts.
+   4. show generatedue()/generatedueformerchant() advancing due cycles.
+
+say:
+   "invoice generation processes every pricing segment that overlaps the
+   billing period. it calculates the segment's share of the period, prorates
+   the base fee and included allowance, sums that segment's usage, and charges
+   only usage above its allowance using its saved overage rate. bcmath keeps
+   monetary arithmetic in decimal strings instead of binary floating point."
+
+say:
+   "the invoice and its line items are written transactionally. a row lock
+   serializes cycle advancement for a subscription, and the unique
+   subscription-period constraint protects against duplicate invoices on
+   retries. a single invoice cannot combine currencies. this application
+   records invoice charges; it does not collect payment or calculate tax."
+
+
+section 7 - show a generated invoice in the ui (5:30-6:10)
+
+screen action:
+   1. in dashboard, go to invoices.
+   2. show a real generated invoice row and click its eye icon.
+   3. on invoice page, show bill to, invoice status/date range, line items,
+      quantity, unit price, total, back to invoices, and print.
+   4. do not click generate due invoices unless you know a subscription is
+      actually due. if there are no due subscriptions, the app correctly says
+      there are no invoices due yet.
+
+ide file order:
+   routes/web.php
+   app/http/controllers/merchantinvoicecontroller.php
+   resources/views/merchant/invoices/show.blade.php
+   resources/views/dashboard.blade.php (invoice row and eye action)
+
+say:
+   "this is the generated invoice detail view. the route is behind the
+   merchant dashboard session middleware, and the controller queries the
+   invoice by both invoice id and merchant id. that prevents another
+   merchant's invoice from being displayed. the view shows itemized charges
+   and is print-friendly. the manual generation button only generates cycles
+   that are due; it does not force an early invoice."
+
+
+section 8 - background jobs and scheduler (6:10-6:55)
+
+ide file order:
+   app/jobs/aggregatedailyusage.php
+   app/console/commands/aggregatepreviousdayusage.php
+   app/console/commands/aggregateusagefordate.php
+   app/jobs/generatedueinvoicesjob.php
+   routes/console.php
+
+screen action:
+   1. show aggregatedailyusage grouping and 500-row batch insert.
+   2. show transaction replacing aggregates for one date.
+   3. show retries/failed() reporting.
+   4. show scheduler times and explain queue worker requirement.
+
+say:
+   "usage aggregation runs as a queued job so it does not block a web request.
+   it groups events for a date, replaces that date's derived rows in a
+   transaction, and inserts batches of no more than 500. that makes reruns
+   idempotent. there is also a date-specific recovery command for reprocessing
+   a failed or stale day. the scheduler queues invoice processing separately;
+   a queue worker must be running for queued jobs to execute."
+
+optional commands to show:
+   php artisan schedule:list
+   php artisan queue:work
+   php artisan schedule:work
+   php artisan billing:aggregate-usage 2026-10-28
+
+do not run the recovery command against production data during the video
+unless you intentionally want to reprocess that date.
+
+
+section 9 - dashboard / api and trade-offs (6:55-7:40)
+
+ide file:
+   app/http/controllers/dashboardcontroller.php
+
+screen action:
+   1. point to current-month usage, top-five query, projection, and
+      same-elapsed-period churn calculation.
+   2. show api route get /api/merchants/{merchantid}/dashboard in
+      routes/api.php, if time.
+   3. show readme data/index/scale section.
+
+say:
+   "the dashboard includes usage and subscription summaries, top customers,
+   projected overage by currency, and customers whose usage fell by more than
+   50 percent compared with the same elapsed portion of the previous month.
+   the projection is a forecast, not an invoice. the json dashboard uses the
+   same controller and enforces that the requested merchant matches the
+   authenticated merchant."
+
+say:
+   "the indexes and chunk sizes are implementation decisions, not proof of
+   production throughput. i have not run a five-million-event benchmark or a
+   true concurrent-connection test. for a production rollout, i would
+   benchmark realistic data, monitor query/queue latency, and only then
+   decide whether partitioning, read replicas, or aggregate-backed dashboard
+   queries are justified."
+
+
+section 10 - tests and close (7:40-8:20)
+
+screen:
+   open tests/feature/billingworkflowtest.php and show test names for usage,
+   tenant isolation, aggregation 501 groups, invoice generation, and invoice
+   detail access. then show readme verification and limitations.
+
+command:
+   php artisan test
+
+say:
+   "i use feature tests to cover the main business flows: merchant
+   authentication and tenant isolation, usage validation and idempotency,
+   rate limits, aggregation batch boundaries and retries, billing proration,
+   invoice cycle advancement, and invoice detail access. the latest verified
+   run passed 26 tests and 171 assertions. this is a functional test suite,
+   not a large-scale performance or real multi-connection concurrency
+   benchmark."
+
+final say:
+   "that concludes the walkthrough. the main design choices are tenant-scoped
+   access, effective-dated pricing snapshots, database-enforced idempotency,
+   decimal-safe invoice calculations, and retryable background jobs. the
+   documented limitations are the next areas i would validate before a
+   production launch."
+
+
+quick file open order
+---------------------
+
+1. resources/views/dashboard.blade.php
+2. resources/views/merchant/management.blade.php
+3. database/migrations/2026_10_28_000000_create_billing_tables.php
+4. routes/api.php
+5. app/http/middleware/authenticatemerchantapikey.php
+6. app/http/requests/recordusagerequest.php
+7. app/http/controllers/api/usagecontroller.php
+8. bootstrap/app.php
+9. app/services/billingperiod.php
+10. app/services/subscriptionsegmentservice.php
+11. app/services/planpricingservice.php
+12. app/services/invoicegenerationservice.php
+13. routes/web.php
+14. app/http/controllers/merchantinvoicecontroller.php
+15. resources/views/merchant/invoices/show.blade.php
+16. app/jobs/aggregatedailyusage.php
+17. app/console/commands/aggregatepreviousdayusage.php
+18. app/console/commands/aggregateusagefordate.php
+19. app/jobs/generatedueinvoicesjob.php
+20. routes/console.php
+21. app/http/controllers/dashboardcontroller.php
+22. tests/feature/billingworkflowtest.php
+23. readme.md
+
+
+final recording safety / honesty check
+--------------------------------------
+
+- speak throughout the walkthrough; add clear narration, not only background
+  music or a silent screen capture.
+- do not show or speak an api key, password, .env, or database credentials.
+- rotate any merchant key already exposed in chat or documentation before
+  recording.
+- use a real generated invoice from your demo data; do not pretend a future
+  period is due or claim an invoice was generated if it was not.
+- do not claim payment collection, tax calculations, a five-million-row
+  benchmark, true concurrent-connection testing, or production deployment
+  unless you have actually implemented and verified them.
+- if a feature does not work during the demo, state that clearly and show the
+  relevant test or code rather than hiding or fabricating a result.
+- before submission, update the test count above if a later code change
+  changes the verified result.

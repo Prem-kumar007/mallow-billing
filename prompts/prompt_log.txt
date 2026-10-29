@@ -1,0 +1,331 @@
+mallow billing prompt
+
+these are reusable prompts you can manually type or paste into an ai coding
+assistant when building or explaining this project. they are templates, not a
+transcript of prompts previously used and not proof that any prompt was run.
+if you need prompt evidence for an assignment, capture genuine screenshots
+while you actually use the prompts in your ide.
+
+use the prompts in order. at the start of each new prompt, let the assistant
+inspect the current repository and existing changes. do not ask it to replace
+whole files without first reviewing their current contents.
+
+never paste merchant api keys, passwords, .env contents, or other credentials
+into an ai chat, prompt screenshot, source file, or git commit.
+
+
+prompt 
+
+i am building a laravel merchant billing and usage-metering application.
+read the assignment brief i provide in full, including every page and
+attachment. then inspect the current repository before changing anything.
+
+first report:
+1. the functional requirements and acceptance criteria from the brief.
+2. the current architecture, relevant files, routes, schema, and tests.
+3. missing or incorrect behavior, with file references.
+4. risks, assumptions, and questions that materially affect the design.
+
+do not implement yet. do not invent requirements or claim tests, benchmarks,
+screenshots, or integrations that do not exist. preserve unrelated work and
+existing user changes. after i confirm the findings, implement the brief in
+small, coherent steps using existing laravel patterns. run focused tests and
+the full relevant test suite, and report exact outcomes and remaining limits.
+
+
+data model and tenant isolation:
+
+
+inspect the existing laravel app and the billing brief. implement or complete
+a normalized, merchant-scoped schema for merchants, customers, plans,
+subscriptions, effective-dated subscription pricing segments, raw usage
+events, daily usage aggregates, invoices, and invoice items.
+
+requirements:
+  use foreign keys, appropriate decimal/integer/date types, and useful
+  indexes for tenant lookups, effective-time lookups, due billing cycles,
+  usage time ranges, and invoice history.
+ 
+ enforce merchant-scoped idempotency for usage with a database unique
+  constraint.
+ 
+ enforce one invoice per subscription and billing period with a database
+  unique constraint.
+ 
+ store a pricing snapshot per subscription segment so later plan edits do not
+  change historical billing.
+ 
+ keep tenant ownership explicit and validate relationships server-side.
+ 
+ follow the repository's laravel migration and naming conventions.
+
+before migrating, detect whether a migration/table already exists and inspect
+the current database assumptions. never drop or overwrite user data. if an
+existing legacy schema needs an upgrade, create a safe forward migration
+do not tell me to blindly run a create-table migration over existing tables.
+add or update tests for ownership boundaries and schema constraints. explain
+which database state is required to test the migrations.
+
+
+prompt 3 - merchant workspace and authentication
+
+
+implement a merchant workspace with secure api-key provisioning and
+session-based browser sign-in.
+
+requirements:
+  
+  generate a cryptographically secure random merchant api key and show its
+  plaintext only once at provisioning time.
+  
+  persist only a password hash of the api key verify it with laravel's
+  password-hashing apis.
+  
+  do not log, hard-code, or expose secrets in responses, fixtures, docs, or
+  screenshots.
+  
+  authenticate browser dashboard/management routes and scope every request to
+  the signed-in merchant.
+  
+  authenticate api requests using merchant id and api-key headers, but treat
+  the verified merchant identity as authoritative rather than trusting a
+  body-supplied merchant id.
+  
+  use clear unauthorized/forbidden/not-found responses and tests for missing
+  credentials, invalid credentials, and cross-merchant access.
+
+inspect current routes, middleware, login views, and existing session behavior
+before editing. keep the existing ui and laravel conventions where possible.
+
+
+prompt 4 - customers, plans, subscriptions, and pricing segments
+
+
+implement merchant-scoped customer, plan, and subscription management.
+inspect existing controllers, requests, services, and views first and reuse
+existing patterns.
+
+requirements:
+ 
+ validate inputs, including plan price, currency, included units, overage
+  rate, and supported billing interval.
+ 
+ a subscription must connect a customer and plan belonging to the same
+  merchant.
+ 
+ snapshot plan price, currency, included units, overage rate, and effective
+  time into a subscription segment.
+ 
+ align the first billing period to the interval's calendar boundary and
+  prorate a mid-cycle first segment fairly.
+ 
+ on plan change, close the current segment and open a new segment at the
+  change timestamp never rewrite prior segment pricing or usage attribution.
+ 
+ validate the change timestamp and prevent changing history after usage has
+  already been recorded for the affected time.
+ 
+ use a transaction and appropriate row locking for related updates.
+ 
+ add tests for tenant isolation, first-cycle proration, plan changes, and
+  segment snapshots.
+
+do not silently default invalid inputs. return standard validation errors or
+clear domain errors. do not modify unrelated behavior.
+
+
+prompt 5 - usage ingestion api
+
+
+implement or complete post /api/usage for recording usage events. first trace
+the existing api route, middleware, validation, models/schema, and tests.
+
+requirements:
+
+authenticate with merchant api credentials and rate-limit by the verified
+  merchant identity.
+
+validate subscription id, idempotency key, positive integer units, and a
+  valid occurred_at timestamp.
+
+confirm the subscription belongs to the authenticated merchant and is
+  active.
+
+find the effective subscription segment using a half-open time range:
+  effective_from <= occurred_at < effective_to.
+
+derive the customer and merchant from the verified subscription do not
+  trust a caller-provided customer or merchant id.
+
+use the unique database key (merchant_id, idempotency_key) as the final
+  defense against duplicate writes.
+
+identical retries return the existing event reuse of the key with a
+  different payload returns http 409. a new event returns http 201.
+
+handle only the expected unique-constraint race rethrow unexpected
+  database errors.
+
+add focused tests for auth, validation, rate limiting, tenant isolation,
+  correct segment selection, matching retries, conflicting retries, and
+  concurrent-key collision behavior that can be validated locally.
+
+return consistent json responses and do not leak secrets or sql details.
+
+
+prompt 6 - billing calculations and invoice generation
+
+
+implement reliable cycle invoice generation using the repository's saved
+subscription-segment pricing snapshots.
+
+requirements:
+
+for every segment overlapping the invoice period, calculate its exact
+  overlap and prorate base price and included allowance by the segment's share
+  of the full billing period.
+
+sum usage for that segment only within its half-open effective invoice
+  range. charge overage only above the prorated allowance using the segment's
+  stored overage rate.
+
+do all monetary arithmetic with decimal-safe operations such as bcmath do
+  not use binary floating-point for billing calculations.
+
+apply documented rounding only at persistence/display boundaries.
+
+reject a single invoice that would combine currencies.
+
+save invoice and invoice items atomically in a transaction.
+
+protect billing-cycle advancement with subscription row locking and enforce
+  invoice idempotency with the unique subscription-period constraint.
+
+advance through all elapsed cycles correctly and create the next effective
+  pricing segment from the current plan snapshot.
+
+add tests for ordinary cycles, proration, plan changes, included allowance,
+  overage, currency mismatch, rounding, retry safety, and cycle advancement.
+
+inspect current interval and invoice behavior first. preserve existing
+contracts and report any assumptions about calendar boundaries or timezone.
+
+
+prompt 7 - daily usage aggregation and recovery
+
+
+implement queued daily usage aggregation from raw usage events into daily
+aggregates.
+
+requirements:
+
+aggregate by merchant, customer, subscription, and pricing segment for a
+  requested calendar date.
+
+replace/reconcile the selected date's previous aggregate rows inside a
+  transaction so rerunning the job does not double-count.
+
+use sql grouping and bounded insert batches of no more than 500 rows.
+
+make the job retryable and report terminal job failures through the
+  repository's logging/reporting conventions.
+
+add a scheduled command that calculates the previous calendar date when it
+  runs, plus a manual recovery command that accepts a strictly validated
+  yyyy-mm-dd date.
+
+invalid recovery dates must print a clear error and must not queue a job.
+
+add tests for retries, reruns, date selection, invalid date rejection, and
+  the exact batch boundary with more than 500 groups.
+
+document worker/scheduler setup and explain whether dashboards currently
+  read raw events or aggregates.
+
+do not claim a load benchmark unless one is actually executed and measured.
+
+
+prompt 8 - dashboard metrics and json api
+
+
+implement merchant dashboard metrics and an authenticated json dashboard api.
+inspect the current dashboardcontroller, query patterns, routes, and views.
+
+include:
+
+active subscription/customer totals and appropriate current-period metrics.
+
+top five customers by usage in the current calendar month.
+
+projected overage revenue by currency, clearly labeled as a forecast and
+  not an issued charge.
+
+customers whose usage has fallen by more than 50% compared with the
+  equivalent elapsed portion of the previous month define how customers with
+  zero prior-period usage are handled.
+
+explicit half-open date bounds and timezone information in the json
+  response.
+
+enforce merchant credential identity against the requested dashboard id.
+
+avoid n+1 queries and use supporting indexes document remaining scale
+  constraints honestly.
+
+test browser and json response shapes, boundaries, calculations, and
+  cross-merchant rejection.
+
+do not change the dashboard's meaning without documenting the change.
+
+
+prompt 9 - shared navigation, manual invoices, and invoice details
+
+
+complete the merchant navigation and invoice ui using the existing design
+system.
+
+requirements:
+
+use a shared navigation component with dashboard, plans, customers,
+  subscriptions, usage, invoices, and sign out.
+
+ensure active navigation state works on dashboard, management, and invoice
+  detail pages and that responsive/mobile layout remains usable.
+
+provide a manual "generate due invoices" action scoped to the logged-in
+  merchant and reuse the same invoice service as scheduled generation.
+
+list recent merchant invoices with an explicit eye-icon view action and
+  accessible label/title.
+
+add an invoice detail page showing customer, billing period, status, issued
+  timestamp if present, line items, quantities, unit prices, and total.
+
+protect detail routes with browser authentication and merchant ownership
+  another merchant must receive not-found/forbidden and not see invoice data.
+
+provide a print-friendly view if consistent with the project.
+
+state clearly that payment collection is not implemented if that remains
+  true.
+
+add feature tests for manual generation, invoice detail rendering, and
+  cross-merchant access.
+
+read the current dashboard, sidebar partial, routes, and controller before
+changing them. do not replace the site's layout with a mismatched design.
+
+
+prompt 10 - pricing cache
+
+
+inspect the plan-pricing service and plan edit flow. implement a merchant- and
+plan-scoped cache with a documented ttl, and invalidate that cache after a
+successful plan update. historical invoice calculations must continue to use
+subscription segment snapshots, never cached current plan data.
+
+add tests proving cached reads are scoped correctly and plan edits invalidate
+the right cache key. do not introduce distributed locks or new abstractions
+unless the existing design or measured requirements justify them.
+
+
